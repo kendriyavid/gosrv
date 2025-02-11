@@ -13,7 +13,8 @@ import (
 func main() {
 	mux := http.NewServeMux()
 	client := redis.NewRedisInstance()
-	ping, err := client.Ping(context.Background()).Result()
+	basectx := context.Background()
+	ping, err := client.Ping(basectx).Result()
 	if err != nil {
 		log.Fatalf("Redis connection failed: %v", err)
 	} else {

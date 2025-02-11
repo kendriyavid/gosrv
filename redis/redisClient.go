@@ -14,9 +14,12 @@ var (
 func NewRedisInstance() *redis.Client {
 	once.Do(func() {
 		RedisInstance = redis.NewClient(&redis.Options{
-			Addr:     "localhost:6379",
-			Password: "",
-			DB:       0,
+			Addr:         "localhost:6379",
+			Password:     "",
+			DB:           0,
+			PoolSize:     5,
+			MinIdleConns: 2,
+			PoolTimeout:  30,
 		})
 	})
 	return RedisInstance

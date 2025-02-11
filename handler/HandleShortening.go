@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"gosrv/redis"
-	"io"
 	"net/http"
 	"net/url"
 	"time"
@@ -38,15 +37,13 @@ type req struct {
 
 func HandleShortening(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
-	fmt.Println("here")
-	// inputURL := r.PathValue("inputURL")
-	bindata, err := io.ReadAll(r.Body)
-	if err != nil {
+	js := new(req)
+	var decoder *json.Decoder = json.NewDecoder(r.Body)
+	if err := decoder.Decode(js); err != nil {
 		http.Error(w, "Invalid URL", http.StatusBadRequest)
 		return
 	}
-	js := new(req)
-	json.Unmarshal(bindata, &js)
+
 	inputURL := js.InputURL
 	if !validationURL(inputURL) {
 		http.Error(w, "Invalid URL", http.StatusBadRequest)
@@ -55,19 +52,19 @@ func HandleShortening(w http.ResponseWriter, r *http.Request) {
 	var key string = generateShortURL(inputURL)
 	sURL := fmt.Sprintf("%s/%s", base, key)
 
-	error := client.Set(basectx, key, inputURL, 0).Err()
-	if error != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
-	response := res{ShortURL: sURL}
-	resBytes, err := json.Marshal(response)
-	if err != nil {
+	if err := client.Set(basectx, key, inputURL, 0).Err(); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(resBytes)
+
+	response := res{ShortURL: sURL}
+	var encoder json.Encoder = *json.NewEncoder(w)
+
+	if err := encoder.Encode(response); err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
 }
