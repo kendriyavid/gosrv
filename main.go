@@ -14,6 +14,7 @@ func main() {
 	mux := http.NewServeMux()
 	client := redis.NewRedisInstance()
 	basectx := context.Background()
+	shortener := handler.NewURLshortener(client, "http://localhost:8080")
 	ping, err := client.Ping(basectx).Result()
 	if err != nil {
 		log.Fatalf("Redis connection failed: %v", err)
@@ -21,7 +22,7 @@ func main() {
 		log.Println("Redis connected:", ping)
 	}
 
-	mux.HandleFunc("POST /api/shorten", handler.HandleShortening)
+	mux.HandleFunc("POST /api/shorten", shortener.HandleShortening)
 	mux.HandleFunc("GET /{key}", handler.HandleRedirect)
 	mux.HandleFunc("GET /test",
 		func(writer http.ResponseWriter, request *http.Request) {

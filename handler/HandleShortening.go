@@ -6,19 +6,60 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"gosrv/redis"
+	rcli "gosrv/redis"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 const base string = "http://localhost:8080"
 
 var basectx context.Context = context.Background()
-var client = redis.NewRedisInstance()
+var client = rcli.NewRedisInstance()
+
+type URLshortener struct {
+	base    string
+	basectx context.Context
+	client  *redis.Client
+	reqPool sync.Pool
+	resPool sync.Pool
+	urlTTL  time.Duration
+}
 
 type res struct {
 	ShortURL string `json:"ShortURL"`
+}
+
+type req struct {
+	InputURL string `json:"inURl"`
+}
+
+func (reqOb *req) reqOBreset() {
+	reqOb.InputURL = ""
+}
+
+func (resOb *res) resObreset() {
+	resOb.ShortURL = ""
+}
+
+func NewURLshortener(redisClient *redis.Client, baseURL string) *URLshortener {
+	shortener := &URLshortener{
+		client:  redisClient,
+		base:    baseURL,
+		urlTTL:  24 * time.Hour,
+		basectx: context.Background(),
+	}
+	shortener.reqPool.New = func() interface{} {
+		return new(req)
+	}
+
+	shortener.resPool.New = func() interface{} {
+		return new(res)
+	}
+	return shortener
 }
 
 func validationURL(input string) bool {
@@ -31,15 +72,11 @@ func generateShortURL(input string) string {
 	return base64.URLEncoding.EncodeToString(hash[:])[:8]
 }
 
-type req struct {
-	InputURL string `json:"inURl"`
-}
-
-func HandleShortening(w http.ResponseWriter, r *http.Request) {
+func (us *URLshortener) HandleShortening(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
-	js := new(req)
-	var decoder *json.Decoder = json.NewDecoder(r.Body)
-	if err := decoder.Decode(js); err != nil {
+
+	js := us.reqPool.Get().(*req)
+	if err := json.NewDecoder(r.Body).Decode(js); err != nil {
 		http.Error(w, "Invalid URL", http.StatusBadRequest)
 		return
 	}
@@ -49,6 +86,10 @@ func HandleShortening(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid URL", http.StatusBadRequest)
 		return
 	}
+
+	js.reqOBreset()
+	us.reqPool.Put(js)
+
 	var key string = generateShortURL(inputURL)
 	sURL := fmt.Sprintf("%s/%s", base, key)
 
@@ -59,12 +100,13 @@ func HandleShortening(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	response := res{ShortURL: sURL}
-	var encoder json.Encoder = *json.NewEncoder(w)
+	response := us.resPool.Get().(*res)
+	response.ShortURL = sURL
 
-	if err := encoder.Encode(response); err != nil {
+	if err := json.NewEncoder(w).Encode(response); err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
-
+	response.resObreset()
+	us.resPool.Put(response)
 }
