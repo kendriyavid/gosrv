@@ -1,32 +1,35 @@
 package handler
 
 import (
-	"context"
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	rcli "gosrv/redis"
+	"log"
 	"net/http"
 	"net/url"
 	"sync"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/redis/go-redis/v9"
 )
 
 const base string = "http://localhost:8080"
+const minLengthCompress int = 100
 
-var basectx context.Context = context.Background()
 var client = rcli.NewRedisInstance()
 
 type URLshortener struct {
-	base    string
-	basectx context.Context
-	client  *redis.Client
-	reqPool sync.Pool
-	resPool sync.Pool
-	urlTTL  time.Duration
+	base           string
+	client         *redis.Client
+	reqPool        sync.Pool
+	resPool        sync.Pool
+	bufPool        sync.Pool
+	compressorPool sync.Pool
+	urlTTL         time.Duration
 }
 
 type res struct {
@@ -47,10 +50,9 @@ func (resOb *res) resObreset() {
 
 func NewURLshortener(redisClient *redis.Client, baseURL string) *URLshortener {
 	shortener := &URLshortener{
-		client:  redisClient,
-		base:    baseURL,
-		urlTTL:  24 * time.Hour,
-		basectx: context.Background(),
+		client: redisClient,
+		base:   baseURL,
+		urlTTL: 24 * time.Hour,
 	}
 	shortener.reqPool.New = func() interface{} {
 		return new(req)
@@ -58,6 +60,16 @@ func NewURLshortener(redisClient *redis.Client, baseURL string) *URLshortener {
 
 	shortener.resPool.New = func() interface{} {
 		return new(res)
+	}
+	shortener.bufPool.New = func() interface{} {
+		return new(bytes.Buffer)
+	}
+	shortener.compressorPool.New = func() interface{} {
+		enc, err := zstd.NewWriter(nil)
+		if err != nil {
+			log.Fatal(err)
+		}
+		return enc
 	}
 	return shortener
 }
@@ -74,7 +86,6 @@ func generateShortURL(input string) string {
 
 func (us *URLshortener) HandleShortening(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
-
 	js := us.reqPool.Get().(*req)
 	if err := json.NewDecoder(r.Body).Decode(js); err != nil {
 		http.Error(w, "Invalid URL", http.StatusBadRequest)
@@ -82,6 +93,7 @@ func (us *URLshortener) HandleShortening(w http.ResponseWriter, r *http.Request)
 	}
 
 	inputURL := js.InputURL
+	fmt.Println(inputURL)
 	if !validationURL(inputURL) {
 		http.Error(w, "Invalid URL", http.StatusBadRequest)
 		return
@@ -93,9 +105,32 @@ func (us *URLshortener) HandleShortening(w http.ResponseWriter, r *http.Request)
 	var key string = generateShortURL(inputURL)
 	sURL := fmt.Sprintf("%s/%s", base, key)
 
-	if err := client.Set(basectx, key, inputURL, 0).Err(); err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
+	if len(inputURL) >= minLengthCompress {
+		// do the compression
+		temp := us.bufPool.Get().(*bytes.Buffer)
+		temp.Reset()
+		enc := us.compressorPool.Get().(*zstd.Encoder)
+		enc.Reset(temp)
+		if _, err := enc.Write([]byte(inputURL)); err != nil {
+			log.Println(err)
+			http.Error(w, "encoding problem", http.StatusInternalServerError)
+			return
+		}
+		enc.Close()
+		us.compressorPool.Put(enc)
+
+		if err := client.Set(r.Context(), key, append(temp.Bytes(), 1), us.urlTTL).Err(); err != nil {
+			fmt.Println("here is the problem")
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		us.bufPool.Put(temp)
+	} else {
+		// appending 0 when not compressed
+		if err := client.Set(r.Context(), key, append([]byte(inputURL), byte(0)), us.urlTTL).Err(); err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

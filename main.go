@@ -15,6 +15,7 @@ func main() {
 	client := redis.NewRedisInstance()
 	basectx := context.Background()
 	shortener := handler.NewURLshortener(client, "http://localhost:8080")
+	decompressor := handler.NewURLDecompressor(client)
 	ping, err := client.Ping(basectx).Result()
 	if err != nil {
 		log.Fatalf("Redis connection failed: %v", err)
@@ -23,7 +24,7 @@ func main() {
 	}
 
 	mux.HandleFunc("POST /api/shorten", shortener.HandleShortening)
-	mux.HandleFunc("GET /{key}", handler.HandleRedirect)
+	mux.HandleFunc("GET /{key}", decompressor.HandleRedirect)
 	mux.HandleFunc("GET /test",
 		func(writer http.ResponseWriter, request *http.Request) {
 			io.WriteString(writer, "Here is a response.")
