@@ -17,9 +17,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const base string = "http://localhost:8080"
+// const base string = "http://localhost:3000"
 const minLengthCompress int = 100
 
+// _ = godotenv.Load()
 var client = rcli.NewRedisInstance()
 
 type URLshortener struct {
@@ -103,7 +104,7 @@ func (us *URLshortener) HandleShortening(w http.ResponseWriter, r *http.Request)
 	us.reqPool.Put(js)
 
 	var key string = generateShortURL(inputURL)
-	sURL := fmt.Sprintf("%s/%s", base, key)
+	sURL := fmt.Sprintf("%s/%s", us.base, key)
 
 	if len(inputURL) >= minLengthCompress {
 		// do the compression

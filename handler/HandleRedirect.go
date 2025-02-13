@@ -34,7 +34,6 @@ func (dc *URLdecompressor) HandleRedirect(w http.ResponseWriter, r *http.Request
 	key := r.PathValue("key")
 	log.Printf("Processing key: %s", key)
 
-	// Get the stored value as bytes
 	val, err := dc.client.Get(r.Context(), key).Bytes()
 	if err != nil {
 		log.Printf("Failed to get URL from Redis: %v", err)
@@ -47,14 +46,11 @@ func (dc *URLdecompressor) HandleRedirect(w http.ResponseWriter, r *http.Request
 
 	var url string
 	if isCompressed == 1 {
-		// Get a decoder from the pool
 		decoder := dc.decompressorPool.Get().(*zstd.Decoder)
 		defer dc.decompressorPool.Put(decoder)
 
-		// Reset the decoder with the new input
 		decoder.Reset(bytes.NewReader(val[:len(val)-1]))
 
-		// Read all decompressed data
 		decompressed, err := io.ReadAll(decoder)
 		if err != nil {
 			log.Printf("Decompression failed: %v", err)
@@ -65,7 +61,7 @@ func (dc *URLdecompressor) HandleRedirect(w http.ResponseWriter, r *http.Request
 		url = string(decompressed)
 		log.Printf("Decompressed URL: %s", url)
 	} else {
-		url = string(val[:len(val)-1]) // Convert bytes to string for uncompressed URLs, excluding the flag
+		url = string(val[:len(val)-1])
 	}
 
 	if !validationURL(url) {
